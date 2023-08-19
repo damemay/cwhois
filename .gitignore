@@ -18,3 +18,6 @@ debian/files
 debian/whois.debhelper.log
 debian/whois.substvars
 debian/whois/
+
+build
+cwhois.egg-info

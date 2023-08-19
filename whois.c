@@ -46,6 +46,10 @@
 #include "whois.h"
 #include "utils.h"
 
+// Python
+#define PY_SSIZE_T_CLEAN
+#include <python3.11/Python.h>
+
 #ifdef HAVE_ICONV
 #include "simple_recode.h"
 #else
@@ -80,177 +84,22 @@ extern int optind;
 
 int main(int argc, char *argv[])
 {
-#ifdef HAVE_GETOPT_LONG
-    const struct option longopts[] = {
-	/* program flags */
-	{"version",		no_argument,		NULL, 1  },
-	{"verbose",		no_argument,		NULL, 2  },
-	{"help",		no_argument,		NULL, 3  },
-	{"no-recursion",	no_argument,		NULL, 4  },
-	{"server",		required_argument,	NULL, 'h'},
-	{"host",		required_argument,	NULL, 'h'},
-	{"port",		required_argument,	NULL, 'p'},
-	/* long RIPE flags */
-	{"exact",		required_argument,	NULL, 'x'},
-	{"all-more",		required_argument,	NULL, 'M'},
-	{"one-more",		required_argument,	NULL, 'm'},
-	{"all-less",		required_argument,	NULL, 'L'},
-	{"one-less",		required_argument,	NULL, 'l'},
-	{"reverse-domain",	required_argument,	NULL, 'd'},
-	{"irt",			required_argument,	NULL, 'c'},
-	{"abuse-contact",	no_argument,		NULL, 'b'},
-	{"brief",		no_argument,		NULL, 'F'},
-	{"primary-keys",	no_argument,		NULL, 'K'},
-	{"persistent-connection", no_argument,		NULL, 'k'},
-	{"no-referenced",	no_argument,		NULL, 'r'},
-	{"no-filtering",	no_argument,		NULL, 'B'},
-	{"no-grouping",		no_argument,		NULL, 'G'},
-	{"select-types",	required_argument,	NULL, 'T'},
-	{"all-sources",		no_argument,		NULL, 'a'},
-	{"sources",		required_argument,	NULL, 's'},
-	{"types",		no_argument,		NULL, 12 }, /* -q */
-	{"ripe-version",	no_argument,		NULL, 12 }, /* -q */
-	{"list-sources",	no_argument,		NULL, 12 }, /* -q */
-	{"template",		required_argument,	NULL, 't'},
-	{"ripe-verbose",	required_argument,	NULL, 'v'},
-	/* long RIPE flags with no short equivalent */
-	{"list-versions",	no_argument,		NULL, 10 },
-	{"diff-versions",	required_argument,	NULL, 11 },
-	{"show-version",	required_argument,	NULL, 11 },
-	{"resource",		no_argument,		NULL, 10 },
-	{"show-personal",	no_argument,		NULL, 10 },
-	{"no-personal",		no_argument,		NULL, 10 },
-	{"show-tag-info",	no_argument,		NULL, 10 },
-	{"no-tag-info",		no_argument,		NULL, 10 },
-	{"filter-tag-include",	required_argument,	NULL, 11 },
-	{"filter-tag-exclude",	required_argument,	NULL, 11 },
-	{NULL,			0,			NULL, 0  }
-    };
-    int longindex;
-#endif
-
-    int ch, nopar = 0;
-    size_t fstringlen = 64;
-    const char *server = NULL, *port = NULL;
-    char *qstring, *fstring;
-    int ret;
-
 #ifdef ENABLE_NLS
     setlocale(LC_ALL, "");
     bindtextdomain(NLS_CAT_NAME, LOCALEDIR);
     textdomain(NLS_CAT_NAME);
 #endif
 
-    fstring = malloc(fstringlen + 1);
-    *fstring = '\0';
+    if(argc==2) query_whois(argv[1]);
+    else printf("usage: %s <domain>\n", argv[0]);
 
-    /* interface for American Fuzzy Lop */
-    if (AFL_MODE) {
-	FILE *fp = fdopen(0, "r");
-	char *buf = NULL;
-	size_t len = 0;
+    return 0;
+}
 
-	/* read one line from stdin */
-	if (getline(&buf, &len, fp) < 0)
-	    err_sys("getline");
-	fflush(fp);
-	/* and use it as command line arguments */
-	argv = merge_args(buf, argv, &argc);
-    }
-
-    /* prepend options from environment */
-    argv = merge_args(getenv("WHOIS_OPTIONS"), argv, &argc);
-
-    while ((ch = GETOPT_LONGISH(argc, argv,
-		"abBcdFg:Gh:Hi:IKlLmMp:q:rRs:t:T:v:V:x",
-		longopts, &longindex)) > 0) {
-	/* RIPE flags */
-	if (strchr(ripeflags, ch)) {
-	    if (strlen(fstring) + 3 > fstringlen) {
-		fstringlen += 3;
-		fstring = realloc(fstring, fstringlen + 1);
-	    }
-	    sprintf(fstring + strlen(fstring), "-%c ", ch);
-	    continue;
-	}
-	if (strchr(ripeflagsp, ch)) {
-	    int flaglen = 3 + strlen(optarg) + 1;
-	    if (strlen(fstring) + flaglen > fstringlen) {
-		fstringlen += flaglen;
-		fstring = realloc(fstring, fstringlen + 1);
-	    }
-	    sprintf(fstring + strlen(fstring), "-%c %s ", ch, optarg);
-	    if (ch == 't' || ch == 'v' || ch == 'q')
-		nopar = 1;
-	    continue;
-	}
-	switch (ch) {
-#ifdef HAVE_GETOPT_LONG
-	/* long RIPE flags with no short equivalent */
-	case 12:
-		nopar = 1;
-		/* fall through */
-	case 10:
-	    {
-		int flaglen = 2 + strlen(longopts[longindex].name) + 1;
-		if (strlen(fstring) + flaglen > fstringlen) {
-		    fstringlen += flaglen;
-		    fstring = realloc(fstring, fstringlen + 1);
-		}
-		sprintf(fstring + strlen(fstring), "--%s ",
-			longopts[longindex].name);
-	    }
-	    break;
-	case 11:
-	    {
-		int flaglen = 2 + strlen(longopts[longindex].name) + 1
-		    + strlen(optarg) + 1;
-		if (strlen(fstring) + flaglen > fstringlen) {
-		    fstringlen += flaglen;
-		    fstring = realloc(fstring, fstringlen + 1);
-		}
-		sprintf(fstring + strlen(fstring), "--%s %s ",
-			longopts[longindex].name, optarg);
-	    }
-	    break;
-#endif
-	/* program flags */
-	case 'h':
-	    server = strdup(optarg);
-	    break;
-	case 'V':
-	    client_tag = optarg;
-	    break;
-	case 'H':
-	    hide_discl = HIDE_NOT_STARTED;	/* enable disclaimers hiding */
-	    break;
-	case 'I':
-	    server = strdup("\x0E");
-	    break;
-	case 'p':
-	    port = strdup(optarg);
-	    break;
-	case 4:
-	    no_recursion = 1;
-	    break;
-	case 3:
-	    usage(EXIT_SUCCESS);
-	case 2:
-	    verb = 1;
-	    break;
-	case 1:
-	    fprintf(stdout, _("Version %s.\n\nReport bugs to %s.\n"),
-		    VERSION, "<md+whois@linux.it>");
-	    exit(EXIT_SUCCESS);
-	default:
-	    usage(EXIT_FAILURE);
-	}
-    }
-    argc -= optind;
-    argv += optind;
-
-    if (argc == 0 && !nopar)	/* there is no parameter */
-	usage(EXIT_FAILURE);
+int query_whois(const char* query) {
+    const char *server = NULL, *port = NULL;
+    char *qstring;
+    int ret;
 
     /* On some systems realloc only works on non-NULL buffers */
     /* I wish I could remember which ones they are... */
@@ -258,29 +107,17 @@ int main(int argc, char *argv[])
     *qstring = '\0';
 
     /* parse other parameters, if any */
-    if (!nopar) {
-	int qstringlen = 0;
+    int qstringlen = 0;
 
-	while (1) {
-	    qstringlen += strlen(*argv) + 1;
-	    qstring = realloc(qstring, qstringlen + 1);
-	    strcat(qstring, *argv++);
-	    if (argc == 1)
-		break;
-	    strcat(qstring, " ");
-	    argc--;
-	}
-    }
-
-    signal(SIGTERM, sighandler);
-    signal(SIGINT, sighandler);
-    signal(SIGALRM, alarm_handler);
+    qstringlen += strlen(query) + 1;
+    qstring = realloc(qstring, qstringlen + 1);
+    strcat(qstring, query);
 
     if (getenv("WHOIS_HIDE"))
 	hide_discl = HIDE_NOT_STARTED;
 
     /* -v or -t or long flags have been used */
-    if (!server && (!*qstring || *fstring))
+    if (!server && (!*qstring))
 	server = strdup("whois.ripe.net");
 
     if (*qstring) {
@@ -289,17 +126,12 @@ int main(int argc, char *argv[])
 	qstring = tmp;
     }
 
-#ifdef CONFIG_FILE
-    if (!server)
-	server = match_config_file(qstring);
-#endif
-
     if (!server)
 	server = guess_server(qstring);
 
-    ret = handle_query(server, port, qstring, fstring);
-
-    exit(ret);
+    ret = handle_query(server, port, qstring, "");
+    
+    return ret;
 }
 
 /*
@@ -1549,3 +1381,53 @@ void NORETURN usage(int error)
     exit(error);
 }
 
+// Python
+
+static PyObject* CWhoisError;
+
+static PyObject* cwhois_query(PyObject* self, PyObject* args) {
+    const char* query;
+    int res;
+
+    if(!PyArg_ParseTuple(args, "s", &query))
+        return NULL;
+
+    res = query_whois(query);
+    if(res != 0) {
+        PyErr_SetString(CWhoisError, "Whois query failed");
+        return NULL;
+    }
+
+    return PyLong_FromLong(res);
+}
+
+static PyMethodDef CWhoisMethods[] = {
+    {"query", cwhois_query, METH_VARARGS, "Call whois query"},
+    {NULL, NULL, 0, NULL}
+};
+
+static struct PyModuleDef cwhoismodule = {
+    PyModuleDef_HEAD_INIT,
+    "cwhois",
+    "Allows executing rfc1036 whois",
+    -1,
+    CWhoisMethods
+};
+
+PyMODINIT_FUNC PyInit_cwhois(void) {
+    PyObject* m;
+
+    m = PyModule_Create(&cwhoismodule);
+    if(!m) return NULL;
+
+    CWhoisError = PyErr_NewException("cwhois.error", NULL, NULL);
+    Py_XINCREF(CWhoisError);
+    if(PyModule_AddObject(m, "error", CWhoisError) < 0) {
+        Py_XDECREF(CWhoisError);
+        Py_CLEAR(CWhoisError);
+        Py_DECREF(m);
+        return NULL;
+    }
+
+    return m;
+}
