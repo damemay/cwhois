@@ -12,7 +12,7 @@ def main():
               "cwhois",
               sources=['utils.c', 'whois.c'],
               )],
-          # packages=["cwhois"],
+          packages=["."],
           keywords=["whois", "tld", "domain", "registrar",],
           python_requires=">=3.5",
           platforms="All")
