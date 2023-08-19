@@ -11,10 +11,7 @@ def main():
           ext_modules=[Extension(
               "cwhois",
               sources=['utils.c', 'whois.c'],
-              include_dirs=['.'],
-              runtime_library_dirs=['.'],
-              extra_link_args=["-lidn2"], 
-              extra_compile_args=["-DHAVE_LIBIDN2", "-DHAVE_CRYPT_H", "-DHAVE_LINUX_CRYPT_GENSALT"])],
+              )],
           # packages=["cwhois"],
           keywords=["whois", "tld", "domain", "registrar",],
           python_requires=">=3.5",

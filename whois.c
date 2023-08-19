@@ -174,8 +174,6 @@ int handle_query(const char *hserver, const char *hport,
 	    puts(_("Unknown AS number or IP network. Please upgrade this program."));
 	    return 1;
 	case 4:
-	    if (verb)
-		printf(_("Using server %s.\n"), server + 1);
 	    sockfd = openconn(server + 1, NULL);
 	    free(server);
 	    server = query_crsnic(sockfd, query);
@@ -183,8 +181,6 @@ int handle_query(const char *hserver, const char *hport,
 		server[0] = '\0';
 	    break;
 	case 8:
-	    if (verb)
-		printf(_("Using server %s.\n"), server + 1);
 	    sockfd = openconn(server + 1, NULL);
 	    free(server);
 	    server = query_afilias(sockfd, query);
@@ -218,8 +214,6 @@ int handle_query(const char *hserver, const char *hport,
 	    free(p);
 	    goto retry;
 	case 0x0E:
-	    if (verb)
-		printf(_("Using server %s.\n"), "whois.iana.org");
 	    sockfd = openconn("whois.iana.org", NULL);
 	    free(server);
 	    server = query_iana(sockfd, query);
@@ -235,10 +229,6 @@ int handle_query(const char *hserver, const char *hport,
 	return 0;
 
     query_string = queryformat(server, flags, query);
-    if (verb) {
-	printf(_("Using server %s.\n"), server);
-	printf(_("Query string: \"%s\"\n\n"), query_string);
-    }
 
     sockfd = openconn(server, port);
 
@@ -1327,78 +1317,384 @@ int isasciidigit(const char c)
 
 /* http://www.ripe.net/ripe/docs/databaseref-manual.html */
 
-void NORETURN usage(int error)
-{
-    fprintf((EXIT_SUCCESS == error) ? stdout : stderr, _(
-"Usage: whois [OPTION]... OBJECT...\n\n"
-"-h HOST, --host HOST   connect to server HOST\n"
-"-p PORT, --port PORT   connect to PORT\n"
-"-I                     query whois.iana.org and follow its referral\n"
-"-H                     hide legal disclaimers\n"
-    ));
-    fprintf((EXIT_SUCCESS == error) ? stdout : stderr, _(
-"      --verbose        explain what is being done\n"
-"      --no-recursion   disable recursion from registry to registrar servers\n"
-"      --help           display this help and exit\n"
-"      --version        output version information and exit\n"
-"\n"
-    ));
-    fprintf((EXIT_SUCCESS == error) ? stdout : stderr, _(
-"These flags are supported by whois.ripe.net and some RIPE-like servers:\n"
-"-l                     find the one level less specific match\n"
-"-L                     find all levels less specific matches\n"
-"-m                     find all one level more specific matches\n"
-"-M                     find all levels of more specific matches\n"
-    ));
-    fprintf((EXIT_SUCCESS == error) ? stdout : stderr, _(
-"-c                     find the smallest match containing a mnt-irt attribute\n"
-"-x                     exact match\n"
-"-b                     return brief IP address ranges with abuse contact\n"
-    ));
-    fprintf((EXIT_SUCCESS == error) ? stdout : stderr, _(
-"-B                     turn off object filtering (show email addresses)\n"
-"-G                     turn off grouping of associated objects\n"
-"-d                     return DNS reverse delegation objects too\n"
-    ));
-    fprintf((EXIT_SUCCESS == error) ? stdout : stderr, _(
-"-i ATTR[,ATTR]...      do an inverse look-up for specified ATTRibutes\n"
-"-T TYPE[,TYPE]...      only look for objects of TYPE\n"
-"-K                     only primary keys are returned\n"
-"-r                     turn off recursive look-ups for contact information\n"
-    ));
-    fprintf((EXIT_SUCCESS == error) ? stdout : stderr, _(
-"-R                     force to show local copy of the domain object even\n"
-"                       if it contains referral\n"
-"-a                     also search all the mirrored databases\n"
-"-s SOURCE[,SOURCE]...  search the database mirrored from SOURCE\n"
-"-g SOURCE:FIRST-LAST   find updates from SOURCE from serial FIRST to LAST\n"
-    ));
-    fprintf((EXIT_SUCCESS == error) ? stdout : stderr, _(
-"-t TYPE                request template for object of TYPE\n"
-"-v TYPE                request verbose template for object of TYPE\n"
-"-q [version|sources|types]  query specified server info\n"
-));
-    exit(error);
-}
-
 // Python
 
 static PyObject* CWhoisError;
 
+/* returns a string which should be freed by the caller, or NULL */
+static char *do_query_py(const int sock, const char *query, PyObject** string)
+{
+    char *temp, *p, buf[2000];
+    FILE *fi;
+    int hide = hide_discl;
+    char *referral_server = NULL;
+
+    temp = malloc(strlen(query) + 2 + 1);
+    strcpy(temp, query);
+    strcat(temp, "\r\n");
+
+    fi = fdopen(sock, "r");
+    if (write(sock, temp, strlen(temp)) < 0)
+	err_sys("write");
+    free(temp);
+
+    PyObject* out = PyUnicode_FromString("");
+    while (fgets(buf, sizeof(buf), fi)) {
+	/* 6bone-style referral:
+	 * % referto: whois -h whois.arin.net -p 43 as 1
+	 */
+	if (!referral_server && strneq(buf, "% referto:", 10)) {
+	    char nh[256], np[16], nq[1024];
+
+	    if (sscanf(buf, REFERTO_FORMAT, nh, np, nq) == 3) {
+		/* XXX we are ignoring the new query string */
+		referral_server = malloc(strlen(nh) + 1 + strlen(np) + 1);
+		sprintf(referral_server, "%s:%s", nh, np);
+	    }
+	}
+
+	/* ARIN referrals:
+	 * ReferralServer: rwhois://rwhois.fuse.net:4321/
+	 * ReferralServer: whois://whois.ripe.net
+	 */
+	if (!referral_server && strneq(buf, "ReferralServer:", 15)) {
+	    if ((p = strstr(buf, "rwhois://")))
+		referral_server = strdup(p + 9);
+	    else if ((p = strstr(buf, "whois://")))
+		referral_server = strdup(p + 8);
+	    if (referral_server && (p = strpbrk(referral_server, "/\r\n")))
+		*p = '\0';
+	}
+
+	if (hide_line(&hide, buf))
+	    continue;
+
+	if ((p = strpbrk(buf, "\r\n")))
+	    *p = '\0';
+        PyObject* _buf = PyUnicode_FromString(buf);
+        PyObject* __buf = PyUnicode_Concat(out, _buf);
+        Py_DECREF(out);
+        out = __buf;
+        Py_DECREF(_buf);
+        _buf = PyUnicode_FromString("\n");
+        __buf = PyUnicode_Concat(out, _buf);
+        Py_DECREF(_buf);
+        Py_DECREF(out);
+        out = __buf;
+    }
+
+    if (ferror(fi))
+	err_sys("fgets");
+    fclose(fi);
+
+    if (hide > HIDE_NOT_STARTED && hide != HIDE_TO_THE_END)
+	err_quit(_("Catastrophic error: disclaimer text has been changed.\n"
+		   "Please upgrade this program.\n"));
+
+    *string = out;
+    return referral_server;
+}
+
+static char *query_crsnic_silent(const int sock, const char *query)
+{
+    char *temp, *p, buf[2000];
+    FILE *fi;
+    int hide = hide_discl;
+    char *referral_server = NULL;
+    int state = 0;
+    int dotscount = 0;
+
+    temp = malloc(strlen("domain ") + strlen(query) + 2 + 1);
+    *temp = '\0';
+
+    /* if this has more than one dot then it is a name server */
+    for (p = (char *) query; *p != '\0'; p++)
+	if (*p == '.')
+	    dotscount++;
+
+    if (dotscount == 1 && !strpbrk(query, "=~ "))
+	strcpy(temp, "domain ");
+    strcat(temp, query);
+    strcat(temp, "\r\n");
+
+    fi = fdopen(sock, "r");
+    if (write(sock, temp, strlen(temp)) < 0)
+	err_sys("write");
+    free(temp);
+
+    while (fgets(buf, sizeof(buf), fi)) {
+	/* If there are multiple matches only the server of the first record
+	   is queried */
+	if (state == 0 && strneq(buf, "   Domain Name:", 15))
+	    state = 1;
+	if (state == 0 && strneq(buf, "   Server Name:", 15)) {
+	    referral_server = strdup("");
+	    state = 2;
+	}
+	if (state == 1 && strneq(buf, "   Registrar WHOIS Server:", 26)) {
+	    for (p = buf; *p != ':'; p++);	/* skip until the colon */
+	    for (p++; *p == ' '; p++);		/* skip the spaces */
+	    referral_server = strdup(p);
+	    if ((p = strpbrk(referral_server, "\r\n ")))
+		*p = '\0';
+	    state = 2;
+	}
+
+	/* the output must not be hidden or no data will be shown for
+	   host records and not-existing domains */
+	if (hide_line(&hide, buf))
+	    continue;
+
+	if ((p = strpbrk(buf, "\r\n")))
+	    *p = '\0';
+    }
+
+    if (ferror(fi))
+	err_sys("fgets");
+    fclose(fi);
+
+    return referral_server;
+}
+
+static char *query_afilias_silent(const int sock, const char *query)
+{
+    char *temp, *p, buf[2000];
+    FILE *fi;
+    int hide = hide_discl;
+    char *referral_server = NULL;
+    int state = 0;
+
+    temp = malloc(strlen(query) + 2 + 1);
+    strcpy(temp, query);
+    strcat(temp, "\r\n");
+
+    fi = fdopen(sock, "r");
+    if (write(sock, temp, strlen(temp)) < 0)
+	err_sys("write");
+    free(temp);
+
+    while (fgets(buf, sizeof(buf), fi)) {
+	/* If multiple attributes are returned then use the first result.
+	   This is not supposed to happen. */
+	if (state == 0 && strneq(buf, "Domain Name:", 12))
+	    state = 1;
+	if (state == 1 && strneq(buf, "Registrar WHOIS Server:", 23)) {
+	    for (p = buf; *p != ':'; p++);	/* skip until colon */
+	    for (p++; *p == ' '; p++);		/* skip colon and spaces */
+	    referral_server = strdup(p);
+	    if ((p = strpbrk(referral_server, "\r\n ")))
+		*p = '\0';
+	    state = 2;
+	}
+
+	/* the output must not be hidden or no data will be shown for
+	   host records and not-existing domains */
+	if (hide_line(&hide, buf))
+	    continue;
+
+	if ((p = strpbrk(buf, "\r\n")))
+	    *p = '\0';
+    }
+
+    if (ferror(fi))
+	err_sys("fgets");
+    fclose(fi);
+
+    if (hide > HIDE_NOT_STARTED && hide != HIDE_TO_THE_END)
+	err_quit(_("Catastrophic error: disclaimer text has been changed.\n"
+		   "Please upgrade this program.\n"));
+    return referral_server;
+}
+
+static char *query_iana_silent(const int sock, const char *query)
+{
+    char *temp, *p, buf[2000];
+    FILE *fi;
+    char *referral_server = NULL;
+    int state = 0;
+
+    temp = malloc(strlen(query) + 2 + 1);
+    strcpy(temp, query);
+    strcat(temp, "\r\n");
+
+    fi = fdopen(sock, "r");
+    if (write(sock, temp, strlen(temp)) < 0)
+	err_sys("write");
+    free(temp);
+
+    while (fgets(buf, sizeof(buf), fi)) {
+	/* If multiple attributes are returned then use the first result.
+	   This is not supposed to happen. */
+	if (state == 0 && strneq(buf, "refer:", 6)) {
+	    for (p = buf; *p != ':'; p++);	/* skip until colon */
+	    for (p++; *p == ' '; p++);		/* skip colon and spaces */
+	    referral_server = strdup(p);
+	    if ((p = strpbrk(referral_server, "\r\n ")))
+		*p = '\0';
+	    state = 2;
+	}
+
+	if ((p = strpbrk(buf, "\r\n")))
+	    *p = '\0';
+    }
+
+    if (ferror(fi))
+	err_sys("fgets");
+    fclose(fi);
+
+    return referral_server;
+}
+
+
+static PyObject* handle_query_py(const char *hserver, const char *hport,
+	const char *query, const char *flags)
+{
+    char *server = NULL, *port = NULL;
+    char *p, *query_string;
+    PyObject* obj;
+
+    if (hport) {
+	server = strdup(hserver);
+	port = strdup(hport);
+    } else if (hserver[0] < ' ')
+	server = strdup(hserver);
+    else
+	split_server_port(hserver, &server, &port);
+
+    retry:
+    switch (server[0]) {
+	case 0:
+	    if (!(server = getenv("WHOIS_SERVER")))
+		server = strdup(DEFAULTSERVER);
+	    break;
+	case 1:
+            return PyUnicode_FromFormat("This TLD has no whois server, but you can access the whois database at %s", server);
+	case 3:
+	    return PyUnicode_FromString("This TLD has no whois server.");
+	case 5:
+	    return PyUnicode_FromString("No whois server is known for this kind of object.");
+	case 6:
+	    return PyUnicode_FromString("Unknown AS number or IP network. Please upgrade this program.");
+	case 4:
+	    sockfd = openconn(server + 1, NULL);
+	    free(server);
+	    server = query_crsnic_silent(sockfd, query);
+	    if (no_recursion)
+		server[0] = '\0';
+	    break;
+	case 8:
+	    sockfd = openconn(server + 1, NULL);
+	    free(server);
+	    server = query_afilias_silent(sockfd, query);
+	    if (no_recursion)
+		server[0] = '\0';
+	    break;
+	case 0x0A:
+	    p = convert_6to4(query);
+	    printf(_("\nQuerying for the IPv4 endpoint %s of a 6to4 IPv6 address.\n\n"), p);
+	    free(server);
+	    server = guess_server(p);
+	    query = p;
+	    goto retry;
+	case 0x0B:
+	    p = convert_teredo(query);
+	    printf(_("\nQuerying for the IPv4 endpoint %s of a Teredo IPv6 address.\n\n"), p);
+	    free(server);
+	    server = guess_server(p);
+	    query = p;
+	    goto retry;
+	case 0x0C:
+	    p = convert_inaddr(query);
+	    free(server);
+	    server = guess_server(p);
+	    free(p);
+	    goto retry;
+	case 0x0D:
+	    p = convert_in6arpa(query);
+	    free(server);
+	    server = guess_server(p);
+	    free(p);
+	    goto retry;
+	case 0x0E:
+	    sockfd = openconn("whois.iana.org", NULL);
+	    free(server);
+	    server = query_iana_silent(sockfd, query);
+	    break;
+	default:
+	    break;
+    }
+
+    if (!server)
+	return NULL;
+
+    if (*server == '\0')
+	return NULL;
+
+    query_string = queryformat(server, flags, query);
+
+    sockfd = openconn(server, port);
+
+    server = do_query_py(sockfd, query_string, &obj);
+    free(query_string);
+
+    /* recursion is fun */
+    if (!no_recursion && server && !strchr(query, ' ')) {
+	printf(_("\n\nFound a referral to %s.\n\n"), server);
+	handle_query(server, NULL, query, flags);
+    }
+
+    return obj;
+}
+
+static PyObject* query_whois_py(const char* query) {
+    const char *server = NULL, *port = NULL;
+    char *qstring;
+
+    /* On some systems realloc only works on non-NULL buffers */
+    /* I wish I could remember which ones they are... */
+    qstring = malloc(64);
+    *qstring = '\0';
+
+    /* parse other parameters, if any */
+    int qstringlen = 0;
+
+    qstringlen += strlen(query) + 1;
+    qstring = realloc(qstring, qstringlen + 1);
+    strcat(qstring, query);
+
+    if (getenv("WHOIS_HIDE"))
+	hide_discl = HIDE_NOT_STARTED;
+
+    /* -v or -t or long flags have been used */
+    if (!server && (!*qstring))
+	server = strdup("whois.ripe.net");
+
+    if (*qstring) {
+	char *tmp = normalize_domain(qstring);
+	free(qstring);
+	qstring = tmp;
+    }
+
+    if (!server)
+	server = guess_server(qstring);
+
+    return handle_query_py(server, port, qstring, "");
+}
+
 static PyObject* cwhois_query(PyObject* self, PyObject* args) {
     const char* query;
-    int res;
+    PyObject* res;
 
     if(!PyArg_ParseTuple(args, "s", &query))
         return NULL;
 
-    res = query_whois(query);
-    if(res != 0) {
+    res = query_whois_py(query);
+    if(res == NULL) {
         PyErr_SetString(CWhoisError, "Whois query failed");
         return NULL;
     }
 
-    return PyLong_FromLong(res);
+    return res;
 }
 
 static PyMethodDef CWhoisMethods[] = {
