@@ -15,7 +15,7 @@ const char *whereas(const unsigned long);
 const char *whereas32(const unsigned long);
 char *queryformat(const char *, const char *, const char *);
 int hide_line(int *hiding, const char *const line);
-char *do_query(const int, const char *);
+char *do_query(const int, const char *, char **, size_t);
 char *query_crsnic(const int, const char *);
 char *query_afilias(const int, const char *);
 char *query_iana(const int, const char *);
@@ -37,10 +37,10 @@ char *convert_6to4(const char *);
 char *convert_teredo(const char *);
 char *convert_inaddr(const char *);
 char *convert_in6arpa(const char *);
-int handle_query(const char *server, const char *port,
+char *handle_query(const char *server, const char *port,
 		   const char *qstring, const char *fstring);
 void split_server_port(const char *const input, char **server, char **port);
-int query_whois(const char* query);
+char *query_whois(const char* query);
 
 
 /* flags for RIPE-like servers */

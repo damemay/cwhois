@@ -3,7 +3,7 @@ from setuptools.extension import Extension
 
 def main():
     setup(name="cwhois",
-          version="1.0.4",
+          version="1.1.0",
           description="rfc1036's (Marco d'Itri) Intelligent WHOIS client fork extended for Python usage.",
           author="Mariusz Krzyzok, Marco d'Itri",
           url="http://github.com/damemay/cwhois/",
