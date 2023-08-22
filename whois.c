@@ -48,7 +48,8 @@
 
 // Python
 #define PY_SSIZE_T_CLEAN
-#include <python3.11/Python.h>
+#include <python3.10/Python.h>
+#include <python3.10/structmember.h>
 
 #ifdef HAVE_ICONV
 #include "simple_recode.h"
@@ -82,112 +83,13 @@ extern char *optarg;
 extern int optind;
 #endif
 
-static inline void strtolower(char** str) {
-    char* _str = *str;
-    for(size_t i=0; _str[i] != '\0'; ++i) {
-        _str[i] = tolower(_str[i]);
-    }
-}
-
-static inline void lstrip_whitespace(char** str) {
-    char* _str = *str;
-    size_t i=0;
-    while(_str[i] != '\0') {
-        if(!isspace(_str[i])) break;
-        ++i;
-    }
-    strcpy(_str, _str+i);
-}
-
-typedef struct domain {
-    char* status;
-    char* created;
-    char* updated;
-    char* expires;
-    char* registrar;
-} domain;
-
-static inline char* stripcpy(const char* val, const size_t size) {
-    char* str = malloc(size);
-    if(!str) return NULL;
-    strcpy(str, val);
-    lstrip_whitespace(&str);
-    return str;
-}
-static inline void check_key(const char* key, const size_t size, const char* val, domain* d) {
-    if(strstr(key, "update") || 
-            strstr(key, "change") ||
-            strstr(key, "modif")) {
-        if(!d->updated) { 
-            d->updated = stripcpy(val, size);
-        }
-    } else if(strstr(key, "create") ||
-            strstr(key, "creation")) {
-        if(!d->created) { 
-            d->created = stripcpy(val, size);
-        }
-    } else if(strstr(key, "expir") ||
-            strstr(key, "renewal")) {
-        if(!d->expires) {
-            d->expires = stripcpy(val, size);
-        }
-    } else if(strstr(key, "status")) {
-        if(!d->status) {
-            d->status = stripcpy(val, size);
-        }
-    } else if(strstr(key, "registrar")) {
-        if(!d->registrar) {
-            if(strlen(key)==strlen("registrar")) d->registrar = stripcpy(val, size);
-        }
-    }
-}
-
-static inline domain* empty_domain() {
-    domain* d = malloc(sizeof(domain));
-    if(!d) return NULL;
-    d->created = NULL;
-    d->expires = NULL;
-    d->registrar = NULL;
-    d->status = NULL;
-    d->updated = NULL;
-    return d;
-}
-
-static inline domain* parse_whois(char* text) {
-    char delim[] = "\n";
-    char* tok = strtok(text, delim);
-    domain* d = empty_domain();
-    int r = 0;
-    while(tok) {
-        char* pos;
-        char* copy = malloc(strlen(tok)+1);
-        strcpy(copy, tok);
-        strtolower(&tok);
-        if((pos = strstr(tok, ": "))) {
-            size_t k_size = (pos-tok)+1;
-            char key[k_size];
-            strncpy(key, tok, k_size);
-            key[k_size-1] = '\0';
-
-            size_t v_size = strlen(tok) - k_size + 1;
-            char* v = copy+k_size+1;
-            
-            if(!r) {
-                check_key(key, v_size, v, d);
-            } else {
-                if(!d->registrar) d->registrar = stripcpy(v, v_size);
-                r = 0;
-            }
-        } else if(strstr(tok, "registrar")) {
-            r = 1;
-        } else if(r) {
-            if(!d->registrar) d->registrar = stripcpy(copy, strlen(copy)+1);
-            r = 0;
-        }
-        tok = strtok(NULL, delim);
-        free(copy);
-    }
-    return d;
+static inline void domain_free(domain* d) {
+    if(d->created) free(d->created);
+    if(d->expires) free(d->expires);
+    if(d->updated) free(d->updated);
+    if(d->status) free(d->status);
+    if(d->registrar) free(d->registrar);
+    free(d);
 }
 
 int main(int argc, char *argv[])
@@ -209,7 +111,7 @@ int main(int argc, char *argv[])
         if(d->status)           printf("Status: %s\n", d->status);
         if(d->registrar)        printf("Registrar: %s\n", d->registrar);
 
-        free(d);
+        domain_free(d);
         free(q);
     } else printf("usage: %s <domain>\n", argv[0]);
 
@@ -1443,26 +1345,286 @@ char *query_iana(const int sock, const char *query)
 
 /* http://www.ripe.net/ripe/docs/databaseref-manual.html */
 
+static inline void strtolower(char** str) {
+    char* _str = *str;
+    for(size_t i=0; _str[i] != '\0'; ++i) {
+        _str[i] = tolower(_str[i]);
+    }
+}
+
+static inline void lstrip_whitespace(char** str) {
+    char* _str = *str;
+    size_t i=0;
+    while(_str[i] != '\0') {
+        if(!isspace(_str[i])) break;
+        ++i;
+    }
+    strcpy(_str, _str+i);
+}
+
+static inline char* stripcpy(const char* val, const size_t size) {
+    char* str = malloc(size);
+    if(!str) return NULL;
+    strcpy(str, val);
+    lstrip_whitespace(&str);
+    return str;
+}
+static inline void check_key(const char* key, const size_t size, const char* val, domain* d) {
+    if(strstr(key, "update") || 
+            strstr(key, "change") ||
+            strstr(key, "modif")) {
+        if(!d->updated) { 
+            d->updated = stripcpy(val, size);
+        }
+    } else if(strstr(key, "create") ||
+            strstr(key, "creation")) {
+        if(!d->created) { 
+            d->created = stripcpy(val, size);
+        }
+    } else if(strstr(key, "expir") ||
+            strstr(key, "renewal")) {
+        if(!d->expires) {
+            d->expires = stripcpy(val, size);
+        }
+    } else if(strstr(key, "status")) {
+        if(!d->status) {
+            d->status = stripcpy(val, size);
+        }
+    } else if(strstr(key, "registrar")) {
+        if(!d->registrar) {
+            if(strlen(key)==strlen("registrar")) d->registrar = stripcpy(val, size);
+        }
+    }
+}
+
+static inline domain* empty_domain() {
+    domain* d = malloc(sizeof(domain));
+    if(!d) return NULL;
+    d->created = NULL;
+    d->expires = NULL;
+    d->registrar = NULL;
+    d->status = NULL;
+    d->updated = NULL;
+    return d;
+}
+
+domain* parse_whois(char* text) {
+    char delim[] = "\n";
+    char* tok = strtok(text, delim);
+    domain* d = empty_domain();
+    int r = 0;
+    while(tok) {
+        char* pos;
+        char* copy = malloc(strlen(tok)+1);
+        strcpy(copy, tok);
+        strtolower(&tok);
+        if((pos = strstr(tok, ": "))) {
+            size_t k_size = (pos-tok)+1;
+            char key[k_size];
+            strncpy(key, tok, k_size);
+            key[k_size-1] = '\0';
+
+            size_t v_size = strlen(tok) - k_size + 1;
+            char* v = copy+k_size+1;
+            
+            if(!r) {
+                check_key(key, v_size, v, d);
+            } else {
+                if(!d->registrar) d->registrar = stripcpy(v, v_size);
+                r = 0;
+            }
+        } else if(strstr(tok, "registrar")) {
+            r = 1;
+        } else if(r) {
+            if(!d->registrar) d->registrar = stripcpy(copy, strlen(copy)+1);
+            r = 0;
+        }
+        tok = strtok(NULL, delim);
+        free(copy);
+    }
+    return d;
+}
+
 // Python
+
+static PyObject* CWhoisError;
+
+typedef struct {
+    PyObject_HEAD
+    PyObject* created;
+    PyObject* updated;
+    PyObject* expires;
+    PyObject* status;
+    PyObject* registrar;
+} Domain;
+
+static int Domain_traverse(Domain* self, visitproc visit, void* arg) {
+    Py_VISIT(self->created);
+    Py_VISIT(self->updated);
+    Py_VISIT(self->expires);
+    Py_VISIT(self->status);
+    Py_VISIT(self->registrar);
+    return 0;
+}
+
+static int Domain_clear(Domain* self) {
+    Py_CLEAR(self->created);
+    Py_CLEAR(self->updated);
+    Py_CLEAR(self->expires);
+    Py_CLEAR(self->status);
+    Py_CLEAR(self->registrar);
+    return 0;
+}
+
+static void Domain_dealloc(Domain* self) {
+    PyObject_GC_UnTrack(self);
+    Domain_clear(self);
+    Py_TYPE(self)->tp_free((PyObject*)self);
+}
+
+static PyObject* Domain_new(PyTypeObject* type, PyObject* args, PyObject* kwds) {
+    Domain* self;
+    self = (Domain*)type->tp_alloc(type, 0);
+    if(self) {
+        self->created = PyUnicode_FromString("");
+        if(!self->created) {
+            Py_DECREF(self);
+            return NULL;
+        }
+        self->updated = PyUnicode_FromString("");
+        if(!self->updated) {
+            Py_DECREF(self);
+            return NULL;
+        }
+        self->expires = PyUnicode_FromString("");
+        if(!self->expires) {
+            Py_DECREF(self);
+            return NULL;
+        }
+        self->status = PyUnicode_FromString("");
+        if(!self->status) {
+            Py_DECREF(self);
+            return NULL;
+        }
+        self->registrar = PyUnicode_FromString("");
+        if(!self->registrar) {
+            Py_DECREF(self);
+            return NULL;
+        }
+    }
+    return (PyObject*)self;
+}
+
+static int Domain_init(Domain* self, PyObject* args, PyObject* kwds) {
+    static char* kwlist[] = {"created", "updated", "expires", "status", "registrar", NULL};
+    PyObject* created = NULL,
+        *updated = NULL,
+        *expires = NULL,
+        *status = NULL,
+        *registrar = NULL,
+        *tmp;
+
+    if(!PyArg_ParseTupleAndKeywords(args, kwds, "|s#s#s#s#s#", kwlist,
+                &created, &updated, &expires, &status, &registrar)) {
+        PyErr_SetString(CWhoisError, "Failed to parse cwhois.Domain arguments");
+        return -1;
+    } 
+
+    if(created) {
+        tmp = self->created;
+        Py_INCREF(created);
+        self->created = created;
+        Py_XDECREF(tmp);
+    }
+    if(updated) {
+        tmp = self->updated;
+        Py_INCREF(updated);
+        self->updated = updated;
+        Py_XDECREF(tmp);
+    }
+    if(expires) {
+        tmp = self->expires;
+        Py_INCREF(expires);
+        self->expires = expires;
+        Py_XDECREF(tmp);
+    }
+    if(status) {
+        tmp = self->status;
+        Py_INCREF(status);
+        self->status = status;
+        Py_XDECREF(tmp);
+    }
+    if(registrar) {
+        tmp = self->registrar;
+        Py_INCREF(registrar);
+        self->registrar = registrar;
+        Py_XDECREF(tmp);
+    }
+
+    return 0;
+}
+
+static struct PyMemberDef Domain_members[] = {
+    {"created", T_OBJECT_EX, offsetof(Domain, created), 0, "Created time"},
+    {"updated", T_OBJECT_EX, offsetof(Domain, updated), 0, "Updated time"},
+    {"expires", T_OBJECT_EX, offsetof(Domain, expires), 0, "Expire time"},
+    {"status", T_OBJECT_EX, offsetof(Domain, status), 0, "Status"},
+    {"registrar", T_OBJECT_EX, offsetof(Domain, registrar), 0, "Registrar"},
+    {NULL}
+};
+
+static PyTypeObject DomainType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = "cwhois.domain",
+    .tp_doc = PyDoc_STR("Domain info"),
+    .tp_basicsize = sizeof(Domain),
+    .tp_itemsize = 0,
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
+    .tp_new = Domain_new,
+    .tp_init = (initproc)Domain_init,
+    .tp_dealloc = (destructor)Domain_dealloc,
+    .tp_traverse = (traverseproc)Domain_traverse,
+    .tp_clear = (inquiry)Domain_clear,
+    .tp_members = Domain_members,
+};
 
 static PyObject* cwhois_query(PyObject* self, PyObject* args) {
     const char* query;
     PyObject* ret;
+    domain* d;
+    Domain* dom;
     char* res;
+
+    if(PyType_Ready(&DomainType) != 0)
+        Py_RETURN_NONE;
 
     if(!PyArg_ParseTuple(args, "s", &query))
         return NULL;
 
     res = query_whois(query);
     if(!res) {
-        PyErr_SetString(CWhoisError, "Whois query failed");
+        PyErr_SetString(CWhoisError, "WHOIS query failed");
         return NULL;
     }
 
-    ret = PyUnicode_FromString(res);
-    free(res);
+    d = parse_whois(res);
+    if(!res) {
+        PyErr_SetString(CWhoisError, "Parsing WHOIS failed");
+        free(res);
+        return NULL;
+    }
 
-    return ret;
+    dom = (Domain*)PyObject_CallObject((PyObject*)&DomainType,
+            Py_BuildValue("{s:s#, s:s#, s:s#, s:s#, s:s#}",
+                "created", d->created,
+                "updated", d->updated,
+                "expires", d->expires,
+                "status", d->status,
+                "registrar", d->registrar));
+
+    domain_free(d);
+    free(res);
+    return (PyObject*)dom;
 }
 
 static PyMethodDef CWhoisMethods[] = {
@@ -1480,9 +1642,17 @@ static struct PyModuleDef cwhoismodule = {
 
 PyMODINIT_FUNC PyInit_cwhois(void) {
     PyObject* m;
+    if(PyType_Ready(&DomainType) < 0) return NULL;
 
     m = PyModule_Create(&cwhoismodule);
     if(!m) return NULL;
+
+    Py_INCREF(&DomainType);
+    if(PyModule_AddObject(m, "Domain", (PyObject*)&DomainType) < 0) {
+        Py_DECREF(&DomainType);
+        Py_DECREF(m);
+        return NULL;
+    }
 
     CWhoisError = PyErr_NewException("cwhois.error", NULL, NULL);
     Py_XINCREF(CWhoisError);

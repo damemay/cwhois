@@ -8,6 +8,14 @@
 #define HIDE_DISABLED    -2
 #define HIDE_NOT_STARTED -1
 
+typedef struct domain {
+    char* status;
+    char* created;
+    char* updated;
+    char* expires;
+    char* registrar;
+} domain;
+
 /* prototypes */
 char *guess_server(const char *);
 const char *match_config_file(const char *);
@@ -41,6 +49,7 @@ char *handle_query(const char *server, const char *port,
 		   const char *qstring, const char *fstring);
 void split_server_port(const char *const input, char **server, char **port);
 char *query_whois(const char* query);
+domain* parse_whois(char* text);
 
 
 /* flags for RIPE-like servers */
