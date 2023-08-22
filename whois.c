@@ -82,6 +82,114 @@ extern char *optarg;
 extern int optind;
 #endif
 
+static inline void strtolower(char** str) {
+    char* _str = *str;
+    for(size_t i=0; _str[i] != '\0'; ++i) {
+        _str[i] = tolower(_str[i]);
+    }
+}
+
+static inline void lstrip_whitespace(char** str) {
+    char* _str = *str;
+    size_t i=0;
+    while(_str[i] != '\0') {
+        if(!isspace(_str[i])) break;
+        ++i;
+    }
+    strcpy(_str, _str+i);
+}
+
+typedef struct domain {
+    char* status;
+    char* created;
+    char* updated;
+    char* expires;
+    char* registrar;
+} domain;
+
+static inline char* stripcpy(const char* val, const size_t size) {
+    char* str = malloc(size);
+    if(!str) return NULL;
+    strcpy(str, val);
+    lstrip_whitespace(&str);
+    return str;
+}
+static inline void check_key(const char* key, const size_t size, const char* val, domain* d) {
+    if(strstr(key, "update") || 
+            strstr(key, "change") ||
+            strstr(key, "modif")) {
+        if(!d->updated) { 
+            d->updated = stripcpy(val, size);
+        }
+    } else if(strstr(key, "create") ||
+            strstr(key, "creation")) {
+        if(!d->created) { 
+            d->created = stripcpy(val, size);
+        }
+    } else if(strstr(key, "expir") ||
+            strstr(key, "renewal")) {
+        if(!d->expires) {
+            d->expires = stripcpy(val, size);
+        }
+    } else if(strstr(key, "status")) {
+        if(!d->status) {
+            d->status = stripcpy(val, size);
+        }
+    } else if(strstr(key, "registrar")) {
+        if(!d->registrar) {
+            if(strlen(key)==strlen("registrar")) d->registrar = stripcpy(val, size);
+        }
+    }
+}
+
+static inline domain* empty_domain() {
+    domain* d = malloc(sizeof(domain));
+    if(!d) return NULL;
+    d->created = NULL;
+    d->expires = NULL;
+    d->registrar = NULL;
+    d->status = NULL;
+    d->updated = NULL;
+    return d;
+}
+
+static inline domain* parse_whois(char* text) {
+    char delim[] = "\n";
+    char* tok = strtok(text, delim);
+    domain* d = empty_domain();
+    int r = 0;
+    while(tok) {
+        char* pos;
+        char* copy = malloc(strlen(tok)+1);
+        strcpy(copy, tok);
+        strtolower(&tok);
+        if((pos = strstr(tok, ": "))) {
+            size_t k_size = (pos-tok)+1;
+            char key[k_size];
+            strncpy(key, tok, k_size);
+            key[k_size-1] = '\0';
+
+            size_t v_size = strlen(tok) - k_size + 1;
+            char* v = copy+k_size+1;
+            
+            if(!r) {
+                check_key(key, v_size, v, d);
+            } else {
+                if(!d->registrar) d->registrar = stripcpy(v, v_size);
+                r = 0;
+            }
+        } else if(strstr(tok, "registrar")) {
+            r = 1;
+        } else if(r) {
+            if(!d->registrar) d->registrar = stripcpy(copy, strlen(copy)+1);
+            r = 0;
+        }
+        tok = strtok(NULL, delim);
+        free(copy);
+    }
+    return d;
+}
+
 int main(int argc, char *argv[])
 {
 #ifdef ENABLE_NLS
@@ -92,7 +200,17 @@ int main(int argc, char *argv[])
 
     if(argc==2) {
         char* q = query_whois(argv[1]);
-        printf("%s\n", q);
+        // printf("%s\n", q);
+        domain* d = parse_whois(q);
+
+        if(d->created)          printf("Created: %s\n", d->created);
+        if(d->expires)          printf("Expires: %s\n", d->expires);
+        if(d->updated)          printf("Updated: %s\n", d->updated);
+        if(d->status)           printf("Status: %s\n", d->status);
+        if(d->registrar)        printf("Registrar: %s\n", d->registrar);
+
+        free(d);
+        free(q);
     } else printf("usage: %s <domain>\n", argv[0]);
 
     return 0;
@@ -1326,219 +1444,6 @@ char *query_iana(const int sock, const char *query)
 /* http://www.ripe.net/ripe/docs/databaseref-manual.html */
 
 // Python
-
-static PyObject* CWhoisError;
-
-// /* returns a string which should be freed by the caller, or NULL */
-// static char *do_query_py(const int sock, const char *query, PyObject** string)
-// {
-//     char *temp, *p, buf[2000];
-//     FILE *fi;
-//     int hide = hide_discl;
-//     char *referral_server = NULL;
-// 
-//     temp = malloc(strlen(query) + 2 + 1);
-//     strcpy(temp, query);
-//     strcat(temp, "\r\n");
-// 
-//     fi = fdopen(sock, "r");
-//     if (write(sock, temp, strlen(temp)) < 0)
-// 	err_sys("write");
-//     free(temp);
-// 
-//     PyObject* out = PyUnicode_FromString("");
-//     while (fgets(buf, sizeof(buf), fi)) {
-// 	/* 6bone-style referral:
-// 	 * % referto: whois -h whois.arin.net -p 43 as 1
-// 	 */
-// 	if (!referral_server && strneq(buf, "% referto:", 10)) {
-// 	    char nh[256], np[16], nq[1024];
-// 
-// 	    if (sscanf(buf, REFERTO_FORMAT, nh, np, nq) == 3) {
-// 		/* XXX we are ignoring the new query string */
-// 		referral_server = malloc(strlen(nh) + 1 + strlen(np) + 1);
-// 		sprintf(referral_server, "%s:%s", nh, np);
-// 	    }
-// 	}
-// 
-// 	/* ARIN referrals:
-// 	 * ReferralServer: rwhois://rwhois.fuse.net:4321/
-// 	 * ReferralServer: whois://whois.ripe.net
-// 	 */
-// 	if (!referral_server && strneq(buf, "ReferralServer:", 15)) {
-// 	    if ((p = strstr(buf, "rwhois://")))
-// 		referral_server = strdup(p + 9);
-// 	    else if ((p = strstr(buf, "whois://")))
-// 		referral_server = strdup(p + 8);
-// 	    if (referral_server && (p = strpbrk(referral_server, "/\r\n")))
-// 		*p = '\0';
-// 	}
-// 
-// 	if (hide_line(&hide, buf))
-// 	    continue;
-// 
-// 	if ((p = strpbrk(buf, "\r\n")))
-// 	    *p = '\0';
-//         PyObject* _buf = PyUnicode_FromString(buf);
-//         PyObject* __buf = PyUnicode_Concat(out, _buf);
-//         Py_DECREF(out);
-//         out = __buf;
-//         Py_DECREF(_buf);
-//         _buf = PyUnicode_FromString("\n");
-//         __buf = PyUnicode_Concat(out, _buf);
-//         Py_DECREF(_buf);
-//         Py_DECREF(out);
-//         out = __buf;
-//     }
-// 
-//     if (ferror(fi))
-// 	err_sys("fgets");
-//     fclose(fi);
-// 
-//     if (hide > HIDE_NOT_STARTED && hide != HIDE_TO_THE_END)
-// 	err_quit(_("Catastrophic error: disclaimer text has been changed.\n"
-// 		   "Please upgrade this program.\n"));
-// 
-//     *string = out;
-//     return referral_server;
-// }
-// 
-// 
-// 
-// static PyObject* handle_query_py(const char *hserver, const char *hport,
-// 	const char *query, const char *flags)
-// {
-//     char *server = NULL, *port = NULL;
-//     char *p, *query_string;
-//     PyObject* obj;
-// 
-//     if (hport) {
-// 	server = strdup(hserver);
-// 	port = strdup(hport);
-//     } else if (hserver[0] < ' ')
-// 	server = strdup(hserver);
-//     else
-// 	split_server_port(hserver, &server, &port);
-// 
-//     retry:
-//     switch (server[0]) {
-// 	case 0:
-// 	    if (!(server = getenv("WHOIS_SERVER")))
-// 		server = strdup(DEFAULTSERVER);
-// 	    break;
-// 	case 1:
-//             return PyUnicode_FromFormat("This TLD has no whois server, but you can access the whois database at %s", server);
-// 	case 3:
-// 	    return PyUnicode_FromString("This TLD has no whois server.");
-// 	case 5:
-// 	    return PyUnicode_FromString("No whois server is known for this kind of object.");
-// 	case 6:
-// 	    return PyUnicode_FromString("Unknown AS number or IP network. Please upgrade this program.");
-// 	case 4:
-// 	    sockfd = openconn(server + 1, NULL);
-// 	    free(server);
-// 	    server = query_crsnic(sockfd, query);
-// 	    if (no_recursion)
-// 		server[0] = '\0';
-// 	    break;
-// 	case 8:
-// 	    sockfd = openconn(server + 1, NULL);
-// 	    free(server);
-// 	    server = query_afilias(sockfd, query);
-// 	    if (no_recursion)
-// 		server[0] = '\0';
-// 	    break;
-// 	case 0x0A:
-// 	    p = convert_6to4(query);
-// 	    printf(_("\nQuerying for the IPv4 endpoint %s of a 6to4 IPv6 address.\n\n"), p);
-// 	    free(server);
-// 	    server = guess_server(p);
-// 	    query = p;
-// 	    goto retry;
-// 	case 0x0B:
-// 	    p = convert_teredo(query);
-// 	    printf(_("\nQuerying for the IPv4 endpoint %s of a Teredo IPv6 address.\n\n"), p);
-// 	    free(server);
-// 	    server = guess_server(p);
-// 	    query = p;
-// 	    goto retry;
-// 	case 0x0C:
-// 	    p = convert_inaddr(query);
-// 	    free(server);
-// 	    server = guess_server(p);
-// 	    free(p);
-// 	    goto retry;
-// 	case 0x0D:
-// 	    p = convert_in6arpa(query);
-// 	    free(server);
-// 	    server = guess_server(p);
-// 	    free(p);
-// 	    goto retry;
-// 	case 0x0E:
-// 	    sockfd = openconn("whois.iana.org", NULL);
-// 	    free(server);
-// 	    server = query_iana(sockfd, query);
-// 	    break;
-// 	default:
-// 	    break;
-//     }
-// 
-//     if (!server)
-// 	return NULL;
-// 
-//     if (*server == '\0')
-// 	return NULL;
-// 
-//     query_string = queryformat(server, flags, query);
-// 
-//     sockfd = openconn(server, port);
-// 
-//     server = do_query_py(sockfd, query_string, &obj);
-//     free(query_string);
-// 
-//     /* recursion is fun */
-//     if (!no_recursion && server && !strchr(query, ' ')) {
-// 	printf(_("\n\nFound a referral to %s.\n\n"), server);
-// 	handle_query(server, NULL, query, flags);
-//     }
-// 
-//     return obj;
-// }
-// 
-// static PyObject* query_whois_py(const char* query) {
-//     const char *server = NULL, *port = NULL;
-//     char *qstring;
-// 
-//     /* On some systems realloc only works on non-NULL buffers */
-//     /* I wish I could remember which ones they are... */
-//     qstring = malloc(64);
-//     *qstring = '\0';
-// 
-//     /* parse other parameters, if any */
-//     int qstringlen = 0;
-// 
-//     qstringlen += strlen(query) + 1;
-//     qstring = realloc(qstring, qstringlen + 1);
-//     strcat(qstring, query);
-// 
-//     if (getenv("WHOIS_HIDE"))
-// 	hide_discl = HIDE_NOT_STARTED;
-// 
-//     /* -v or -t or long flags have been used */
-//     if (!server && (!*qstring))
-// 	server = strdup("whois.ripe.net");
-// 
-//     if (*qstring) {
-// 	char *tmp = normalize_domain(qstring);
-// 	free(qstring);
-// 	qstring = tmp;
-//     }
-// 
-//     if (!server)
-// 	server = guess_server(qstring);
-// 
-//     return handle_query_py(server, port, qstring, "");
-// }
 
 static PyObject* cwhois_query(PyObject* self, PyObject* args) {
     const char* query;
