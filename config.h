@@ -25,7 +25,9 @@
 #ifdef __FreeBSD__
 /* which versions? */
 # define HAVE_GETOPT_LONG
-# define HAVE_GETADDRINFO
+#ifndef HAVE_GETADDRINFO
+#  define HAVE_GETADDRINFO
+#endif
 # define ENABLE_NLS
 # ifndef LOCALEDIR
 #  define LOCALEDIR "/usr/local/share/locale"
@@ -34,26 +36,34 @@
 
 /* needs unistd.h */
 #if defined _POSIX_C_SOURCE && _POSIX_C_SOURCE >= 200112L
-# define HAVE_GETADDRINFO
+#ifndef HAVE_GETADDRINFO
+#  define HAVE_GETADDRINFO
+#endif
 # define HAVE_REGEXEC
 #endif
 
 #if defined __APPLE__ && defined __MACH__
 # define HAVE_GETOPT_LONG
-# define HAVE_GETADDRINFO
+#ifndef HAVE_GETADDRINFO
+#  define HAVE_GETADDRINFO
+#endif
 # define HAVE_BSDICRYPT
 #endif
 
 #if defined __midipix__
 # define HAVE_GETOPT_LONG
-# define HAVE_GETADDRINFO
+#ifndef HAVE_GETADDRINFO
+#  define HAVE_GETADDRINFO
+#endif
 # define HAVE_SHA_CRYPT
 #endif
 
 #if defined __GLIBC__
 # define HAVE_GETOPT_LONG
 # if __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 1
+#ifndef HAVE_GETADDRINFO
 #  define HAVE_GETADDRINFO
+#endif
 # endif
 # if __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 7
 #  define HAVE_SHA_CRYPT
@@ -111,7 +121,9 @@
 
 /* or else getentropy(2) on Linux */
 #if defined __GLIBC__ && __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 25 || defined __midipix__
+#ifndef HAVE_GETENTROPY
 # define HAVE_GETENTROPY
+#endif
 #endif
 
 /* some versions of crypt(3) set errno on error */

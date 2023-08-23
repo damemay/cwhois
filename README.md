@@ -3,9 +3,18 @@ rfc1036's (Marco d'Itri) Intelligent WHOIS client fork extended in C for parsing
 # python usage
 
 ```python
-import cwhois
+>>> import cwhois
+>>> domain = cwhois.query('google.com')
 
-print(cwhois.query('example.com'))
+>>> print(domain)
+created: 1997-09-15T07:00:00+0000
+updated: 2019-09-09T15:39:04+0000
+expires: 2028-09-13T07:00:00+0000
+status: clientUpdateProhibited (https://www.icann.org/epp#clientUpdateProhibited)
+registrar: MarkMonitor, Inc.
+
+>>> print(domain.registrar)
+MarkMonitor, Inc.
 ```
 
 ## install
@@ -20,7 +29,7 @@ print(cwhois.query('example.com'))
 int main(int argc, char** argv)
 {
     if(argc > 1) {
-        // Queries WHOIS and saves output to C-string
+        // Query WHOIS and save output to C-string
         char* q = query_whois(argv[1]);
         puts(q);
 

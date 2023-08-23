@@ -121,7 +121,6 @@ int main(int argc, char *argv[])
 char *query_whois(const char* query) {
     const char *server = NULL, *port = NULL;
     char *qstring;
-    int ret;
 
     /* On some systems realloc only works on non-NULL buffers */
     /* I wish I could remember which ones they are... */
@@ -1461,6 +1460,11 @@ typedef struct {
     PyObject* registrar;
 } Domain;
 
+static PyObject* Domain_str(Domain* self) {
+    return PyUnicode_FromFormat("created: %U\nupdated: %U\nexpires: %U\nstatus: %U\nregistrar: %U",
+            self->created, self->updated, self->expires, self->status, self->registrar);
+}
+
 static int Domain_traverse(Domain* self, visitproc visit, void* arg) {
     Py_VISIT(self->created);
     Py_VISIT(self->updated);
@@ -1588,12 +1592,12 @@ static PyTypeObject DomainType = {
     .tp_dealloc = (destructor)Domain_dealloc,
     .tp_traverse = (traverseproc)Domain_traverse,
     .tp_clear = (inquiry)Domain_clear,
+    .tp_str = (reprfunc)Domain_str,
     .tp_members = Domain_members,
 };
 
 static PyObject* cwhois_query(PyObject* self, PyObject* args) {
     const char* query;
-    PyObject* ret;
     domain* d;
     Domain* dom;
     char* res;
