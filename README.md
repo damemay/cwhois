@@ -1,6 +1,10 @@
 rfc1036's (Marco d'Itri) Intelligent WHOIS client fork extended in C for parsing and Python usage.
 
-# python usage
+## install
+
+`python -m pip install cwhois`
+
+## python sample
 
 ```python
 >>> import cwhois
@@ -17,11 +21,7 @@ registrar: MarkMonitor, Inc.
 MarkMonitor, Inc.
 ```
 
-## install
-
-`python -m pip install cwhois`
-
-# c usage
+## c sample
 
 ```c
 #include "whois.h"
