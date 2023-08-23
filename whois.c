@@ -48,8 +48,8 @@
 
 // Python
 #define PY_SSIZE_T_CLEAN
-#include <python3.10/Python.h>
-#include <python3.10/structmember.h>
+#include <Python.h>
+#include <structmember.h>
 
 #ifdef HAVE_ICONV
 #include "simple_recode.h"
@@ -1359,7 +1359,10 @@ static inline void lstrip_whitespace(char** str) {
         if(!isspace(_str[i])) break;
         ++i;
     }
-    strcpy(_str, _str+i);
+    char* tmp = malloc(strlen(_str)+1);
+    strcpy(tmp, _str+i);
+    free(_str);
+    *str = tmp;
 }
 
 static inline char* stripcpy(const char* val, const size_t size) {
@@ -1517,14 +1520,14 @@ static PyObject* Domain_new(PyTypeObject* type, PyObject* args, PyObject* kwds) 
 
 static int Domain_init(Domain* self, PyObject* args, PyObject* kwds) {
     static char* kwlist[] = {"created", "updated", "expires", "status", "registrar", NULL};
-    PyObject* created = NULL,
-        *updated = NULL,
-        *expires = NULL,
-        *status = NULL,
-        *registrar = NULL,
+    PyObject* created   = Py_None,
+        *updated        = Py_None,
+        *expires        = Py_None,
+        *status         = Py_None,
+        *registrar      = Py_None,
         *tmp;
 
-    if(!PyArg_ParseTupleAndKeywords(args, kwds, "|s#s#s#s#s#", kwlist,
+    if(!PyArg_ParseTupleAndKeywords(args, kwds, "|UUUUU", kwlist,
                 &created, &updated, &expires, &status, &registrar)) {
         PyErr_SetString(CWhoisError, "Failed to parse cwhois.Domain arguments");
         return -1;
@@ -1614,13 +1617,18 @@ static PyObject* cwhois_query(PyObject* self, PyObject* args) {
         return NULL;
     }
 
-    dom = (Domain*)PyObject_CallObject((PyObject*)&DomainType,
-            Py_BuildValue("{s:s#, s:s#, s:s#, s:s#, s:s#}",
-                "created", d->created,
-                "updated", d->updated,
-                "expires", d->expires,
-                "status", d->status,
-                "registrar", d->registrar));
+    if(PyType_Ready(&DomainType) < 0) {
+        domain_free(d);
+        free(res);
+        return NULL;
+    }
+    dom = (Domain*)PyObject_CallFunctionObjArgs((PyObject*)&DomainType,
+                d->created      ? PyUnicode_FromString(d->created)      : PyUnicode_FromString(""),
+                d->updated      ? PyUnicode_FromString(d->updated)      : PyUnicode_FromString(""),
+                d->expires      ? PyUnicode_FromString(d->expires)      : PyUnicode_FromString(""),
+                d->status       ? PyUnicode_FromString(d->status)       : PyUnicode_FromString(""),
+                d->registrar    ? PyUnicode_FromString(d->registrar)    : PyUnicode_FromString(""),
+                NULL);
 
     domain_free(d);
     free(res);
