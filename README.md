@@ -1,3 +1,5 @@
+[![PyPI version](https://badge.fury.io/py/cwhois.svg)](https://badge.fury.io/py/cwhois)
+
 rfc1036's (Marco d'Itri) Intelligent WHOIS client fork extended in C for parsing and Python usage.
 
 ## install
