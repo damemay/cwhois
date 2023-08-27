@@ -119,7 +119,7 @@ int main(int argc, char *argv[])
 }
 
 char *query_whois(const char* query) {
-    const char *server = NULL, *port = NULL;
+    char *server = NULL, *port = NULL;
     char *qstring;
 
     /* On some systems realloc only works on non-NULL buffers */
@@ -150,7 +150,11 @@ char *query_whois(const char* query) {
     if (!server)
 	server = guess_server(qstring);
 
-    return handle_query(server, port, qstring, "");
+    char* q = handle_query(server, port, qstring, "");
+
+    free(qstring);
+
+    return q;
 }
 
 /*
