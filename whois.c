@@ -1602,6 +1602,25 @@ static PyTypeObject DomainType = {
 
 static PyObject* cwhois_query(PyObject* self, PyObject* args) {
     const char* query;
+    char* res;
+
+    if(PyType_Ready(&DomainType) != 0)
+        Py_RETURN_NONE;
+
+    if(!PyArg_ParseTuple(args, "s", &query))
+        return NULL;
+
+    res = query_whois(query);
+    if(!res) {
+        PyErr_SetString(CWhoisError, "WHOIS query failed");
+        return NULL;
+    }
+
+    return PyUnicode_FromString(res);
+}
+
+static PyObject* cwhois_query_parse(PyObject* self, PyObject* args) {
+    const char* query;
     domain* d;
     Domain* dom;
     char* res;
@@ -1645,6 +1664,7 @@ static PyObject* cwhois_query(PyObject* self, PyObject* args) {
 
 static PyMethodDef CWhoisMethods[] = {
     {"query", cwhois_query, METH_VARARGS, "Query WHOIS"},
+    {"query_parse", cwhois_query_parse, METH_VARARGS, "Query WHOIS and parse it into domain class"},
     {NULL, NULL, 0, NULL}
 };
 
